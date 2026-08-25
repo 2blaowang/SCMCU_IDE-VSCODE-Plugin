@@ -1,0 +1,135 @@
+{
+  "name": "scmcu-vscode",
+  "displayName": "SCMCU IDE (SC8 系列)",
+  "description": "在 VS Code 中编译 SC8F/SC8P 系列单片机工程、配置硬件选项、生成 .scx 烧录文件（基于 SCMCU_IDE 工具链）",
+  "version": "0.7.0",
+  "publisher": "local",
+  "license": "MIT",
+  "icon": "images/icon.png",
+  "engines": {
+    "vscode": "^1.134.0"
+  },
+  "categories": [
+    "Other",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "SC8F052",
+    "SC8F072",
+    "SCMCU",
+    "picc",
+    "scx"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/*.scw",
+    "onCommand:scmcu.build",
+    "onCommand:scmcu.selectChip",
+    "onCommand:scmcu.hardwareOptions",
+    "onCommand:scmcu.configureCompiler",
+    "onCommand:scmcu.detectCompiler"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "scmcu.build",
+        "title": "SCMCU: 编译 (生成 .hex + .scx)",
+        "icon": "$(debug-start)"
+      },
+      {
+        "command": "scmcu.hardwareOptions",
+        "title": "SCMCU: 芯片设置",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "scmcu.selectChip",
+        "title": "SCMCU: 选择芯片型号"
+      },
+      {
+        "command": "scmcu.configureCompiler",
+        "title": "SCMCU: 配置编译器目录"
+      },
+      {
+        "command": "scmcu.detectCompiler",
+        "title": "SCMCU: 自动检测编译器"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        {
+          "command": "scmcu.build",
+          "when": "resourceFilename =~ /\\.scw$/ || workspaceContains:**/*.scw",
+          "group": "SCMCU@1"
+        },
+        {
+          "command": "scmcu.hardwareOptions",
+          "when": "resourceFilename =~ /\\.scw$/",
+          "group": "SCMCU@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "scmcu.build",
+          "when": "workspaceContains:**/*.scw"
+        },
+        {
+          "command": "scmcu.hardwareOptions",
+          "when": "workspaceContains:**/*.scw"
+        },
+        {
+          "command": "scmcu.selectChip",
+          "when": "workspaceContains:**/*.scw"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SCMCU",
+      "properties": {
+        "scmcu.compilerPath": {
+          "type": "string",
+          "default": "",
+          "description": "SCMCU_IDE 的 data\\bin 目录路径（含 picc.exe）。留空时自动检测。"
+        },
+        "scmcu.idePath": {
+          "type": "string",
+          "default": "",
+          "description": "SCMCU_IDE 安装根目录（含 mcu\\config 目录）。留空时自动检测。"
+        },
+        "scmcu.buildDir": {
+          "type": "string",
+          "default": "build",
+          "description": "编译输出目录（相对工程根目录）。"
+        },
+        "scmcu.outputName": {
+          "type": "string",
+          "default": "SCMCU_Project",
+          "description": "编译产物文件名（不含扩展名），生成 <name>.hex 和 <name>.scx。"
+        },
+        "scmcu.sourceDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["src"],
+          "description": "C 源文件目录（相对工程根目录；空字符串 = 根目录）。.scw 里的 SourceFile 裸名将按此顺序查找，找不到再找根目录和常见目录(src/source)。"
+        },
+        "scmcu.includeDirs": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["inc"],
+          "description": "头文件 include 目录（相对工程根目录；空字符串 = 根目录）。编译时会将这些目录加入 -I。"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --allow-missing-repository"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/vscode": "^1.134.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.9.3"
+  }
+}

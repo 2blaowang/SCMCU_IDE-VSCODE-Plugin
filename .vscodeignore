@@ -1,0 +1,9 @@
+.vscode/**
+src/**
+out/**/*.map
+tsconfig.json
+node_modules/**
+media/**
+test-logic.js
+**.md
+!README.md
