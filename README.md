@@ -65,7 +65,6 @@ CfgCRC = 链式 CRC-16/CCITT-FALSE (poly=0x1021, init=0xFFFF, xorout=0)
 
 | 工程 | 芯片 | 配置字 | CfgSum | CfgCRC |
 |---|---|---|---|---|
-| nail_clipper | SC8P052B | 3FF3,3FAB,3FFF | 156D | 9202 |
 | test | SC8F052 | 7FFF,FFEF | AA75 | 9665 |
 
 ## 设置项（settings.json）
