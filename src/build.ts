@@ -67,9 +67,10 @@ export async function buildProject(workspaceRoot: string, channel: vscode.Output
     incDirs.push(path.join(comp.idePath, 'data', 'include'));
 
     // 错误输出格式化为可解析格式（不影响 hex/scx 产物）
-    const errFmt = 'Error[%n]:%f:%l:%c: %s';
-    const warnFmt = 'Warning[%n]:%f:%l:%c: %s';
-    const msgFmt = 'Info[%n]:%f:%l:%c: %s';
+    // 注意: 路径必须打头(路径:行:列)，VS Code 输出面板才能自动识别为 Ctrl+点击链接
+    const errFmt = '%f:%l:%c: Error[%n] %s';
+    const warnFmt = '%f:%l:%c: Warning[%n] %s';
+    const msgFmt = '%f:%l:%c: Info[%n] %s';
 
     const args = [
         `--chip=${info.device}`,
@@ -144,15 +145,16 @@ function resolveSource(f: string, workspaceRoot: string, sourceDirs: string[]): 
 // 解析 picc 格式化的错误/警告 → VS Code 诊断（Problem 面板，可点击跳转）
 function applyDiagnostics(lines: string[], workspaceRoot: string): void {
     const byFile = new Map<string, vscode.Diagnostic[]>();
-    // 注意: Windows 盘符含冒号(C:\)，文件名段必须用非贪婪 .+? 匹配到 ":数字:数字:" 为止
-    const re = /^(Error|Warning|Info)\[(\d+)\]:(.+?):(\d+):(\d+):\s*(.*)$/;
+    // 新格式: 路径:行:列: Error[编号] 消息 (路径打头, VS Code 输出面板自动出 Ctrl+点击链接)
+    // Windows 盘符含冒号(C:\)，文件名段必须用非贪婪 .+? 匹配到 ":数字:数字:" 为止
+    const DIAG_RE = /^(.+?):(\d+):(\d+):\s*(Error|Warning|Info)\[(\d+)\]\s*(.*)$/;
     for (const raw of lines) {
-        const m = raw.trim().match(re);
+        const m = raw.trim().match(DIAG_RE);
         if (!m) continue;
-        const sev = m[1];
-        const ln = Math.max(0, parseInt(m[4], 10) - 1);
-        const col = Math.max(0, parseInt(m[5], 10) - 1);
-        const msg = `${m[2]} - ${m[6]}`;
+        const sev = m[4];
+        const ln = Math.max(0, parseInt(m[2], 10) - 1);
+        const col = Math.max(0, parseInt(m[3], 10) - 1);
+        const msg = `${m[5]} - ${m[6]}`;
         const severity = sev === 'Error'
             ? vscode.DiagnosticSeverity.Error
             : sev === 'Warning'
@@ -164,7 +166,7 @@ function applyDiagnostics(lines: string[], workspaceRoot: string): void {
             severity,
         );
         diag.source = 'SCMCU';
-        let file = m[3].trim();
+        let file = m[1].trim();
         if (!path.isAbsolute(file)) file = path.join(workspaceRoot, file);
         const key = file.toLowerCase();
         if (!byFile.has(key)) byFile.set(key, []);
