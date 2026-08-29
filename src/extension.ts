@@ -6,6 +6,7 @@ import { buildProject } from './build';
 import { findCompilerDir } from './compiler';
 import { findScwFile, parseScw, writeScwDevice, listChips } from './chip';
 import { showHardwareOptions } from './webview/hardwareOptions';
+import { showSourceManager } from './webview/sourceManager';
 
 export function activate(context: vscode.ExtensionContext): void {
     const channel = vscode.window.createOutputChannel('SCMCU');
@@ -44,7 +45,7 @@ export function activate(context: vscode.ExtensionContext): void {
         );
         if (!pick) return;
         writeScwDevice(scw, pick.label);
-        updateStatusBar(chipStatus, cfgStatus, buildStatus);
+        updateStatusBar(chipStatus, cfgStatus, buildStatus, srcStatus);
         vscode.window.showInformationMessage(`芯片已切换为 ${pick.label}，建议重新打开"硬件选项"确认配置`);
     }));
 
@@ -82,7 +83,48 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     }));
 
-    // ---- 状态栏：芯片型号（点击切换）+ 芯片设置 + 构建 ----
+    // ---- 源文件管理 ----
+    context.subscriptions.push(vscode.commands.registerCommand('scmcu.manageSources', () => {
+        const root = getWorkspaceRoot();
+        if (!root) { vscode.window.showWarningMessage('请先打开包含 .scw 工程的文件夹'); return; }
+        showSourceManager(context, root, channel);
+    }));
+
+    // ---- 脱离 .scw：设置芯片型号 ----
+    context.subscriptions.push(vscode.commands.registerCommand('scmcu.setDevice', async () => {
+        const cfg = vscode.workspace.getConfiguration('scmcu');
+        const cur = cfg.get<string>('device', '') || '';
+        const val = await vscode.window.showInputBox({
+            prompt: '脱离 .scw 编译时使用的芯片型号（如 SC8F052A04）',
+            value: cur,
+            placeHolder: '如 SC8F052A04',
+        });
+        if (val === undefined) return;
+        const dev = val.trim();
+        if (dev === '') { vscode.window.showWarningMessage('芯片型号不能为空'); return; }
+        await cfg.update('device', dev, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(`已设置 scmcu.device = ${dev}（写入工作区设置）`);
+        updateStatusBar(chipStatus, cfgStatus, buildStatus, srcStatus);
+    }));
+
+    // ---- 脱离 .scw：设置配置字 ----
+    context.subscriptions.push(vscode.commands.registerCommand('scmcu.setConfigWords', async () => {
+        const cfg = vscode.workspace.getConfiguration('scmcu');
+        const cur = (cfg.get<string[]>('configWords', []) || []).join(', ');
+        const val = await vscode.window.showInputBox({
+            prompt: '脱离 .scw 编译时的 4 个配置字（十六进制，逗号分隔，如 0x1FFF, 0x3FFF, 0x3FFF, 0x3FFF）',
+            value: cur,
+            placeHolder: '0x1FFF, 0x3FFF, 0x3FFF, 0x3FFF',
+        });
+        if (val === undefined) return;
+        const parts = val.split(',').map(s => s.trim()).filter(s => s.length > 0);
+        await cfg.update('configWords', parts, vscode.ConfigurationTarget.Workspace);
+        vscode.window.showInformationMessage(parts.length
+            ? `已设置 scmcu.configWords = [${parts.join(', ')}]`
+            : '已清空 scmcu.configWords（脱离 .scw 将用默认未编程配置字，编译时给出警告）');
+    }));
+
+    // ---- 状态栏：芯片型号（点击切换）+ 芯片设置 + 构建 + 源文件 ----
     const chipStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
     chipStatus.command = 'scmcu.selectChip';
     context.subscriptions.push(chipStatus);
@@ -92,35 +134,53 @@ export function activate(context: vscode.ExtensionContext): void {
     const buildStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
     buildStatus.command = 'scmcu.build';
     context.subscriptions.push(buildStatus);
+    const srcStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 97);
+    srcStatus.command = 'scmcu.manageSources';
+    context.subscriptions.push(srcStatus);
 
-    updateStatusBar(chipStatus, cfgStatus, buildStatus);
-    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => updateStatusBar(chipStatus, cfgStatus, buildStatus)));
+    updateStatusBar(chipStatus, cfgStatus, buildStatus, srcStatus);
+    context.subscriptions.push(vscode.workspace.onDidChangeWorkspaceFolders(() => updateStatusBar(chipStatus, cfgStatus, buildStatus, srcStatus)));
 }
 
-// 状态栏刷新：显示当前工程 .scw 的芯片型号
-function updateStatusBar(chipStatus: vscode.StatusBarItem, cfgStatus: vscode.StatusBarItem, buildStatus: vscode.StatusBarItem): void {
+// 状态栏刷新：显示当前工程 .scw 的芯片型号；脱离 .scw 模式则显示设置中的型号并仅提供构建
+function updateStatusBar(chipStatus: vscode.StatusBarItem, cfgStatus: vscode.StatusBarItem, buildStatus: vscode.StatusBarItem, srcStatus: vscode.StatusBarItem): void {
     const root = getWorkspaceRoot();
+    const cfg = vscode.workspace.getConfiguration('scmcu');
     let device = '';
+    let scwMode = false;
     if (root) {
         const scw = findScwFile(root);
-        if (scw) device = parseScw(scw).device;
+        if (scw) {
+            device = parseScw(scw).device;
+        } else {
+            scwMode = true;
+            device = cfg.get<string>('device', '') || '';
+        }
     }
     if (device) {
         chipStatus.text = `$(chip) ${device}`;
-        chipStatus.tooltip = '点击切换芯片型号';
+        chipStatus.command = scwMode ? 'scmcu.setDevice' : 'scmcu.selectChip';
+        chipStatus.tooltip = scwMode ? '点击更换芯片型号 (脱离 .scw 模式)' : '点击切换芯片型号';
         chipStatus.show();
-        cfgStatus.text = '$(settings-gear) 芯片设置';
-        cfgStatus.tooltip = '配置看门狗/低压复位/时钟/配置字，保存后写入烧录文件';
-        cfgStatus.show();
         buildStatus.text = '$(debug-start) 构建';
-        buildStatus.tooltip = '编译工程并生成 .hex + .scx（带芯片设置配置）';
+        buildStatus.tooltip = scwMode ? '脱离 .scw 编译：源文件自动扫描或取自 scmcu.sourceFiles，配置字取自 scmcu.configWords' : '编译工程并生成 .hex + .scx（带芯片设置配置）';
         buildStatus.show();
+        // 芯片设置 + 源文件按钮在两种模式下都可用：
+        //   scw 模式 → 读写 .scw 文件
+        //   scw-less 模式 → 读写 scmcu.configWords / scmcu.sourceFiles 工作区设置
+        cfgStatus.text = '$(settings-gear) 芯片设置';
+        cfgStatus.tooltip = scwMode ? '配置硬件选项并写入 scmcu.configWords' : '配置看门狗/低压复位/时钟/配置字，保存后写入烧录文件';
+        cfgStatus.show();
+        srcStatus.text = '$(file-directory) 源文件';
+        srcStatus.tooltip = scwMode ? '管理 scmcu.sourceFiles（脱离 .scw 模式）' : '管理要编译的源文件（添加 / 删除 / 排序）';
+        srcStatus.show();
     } else {
         chipStatus.text = '$(chip) SCMCU';
-        chipStatus.tooltip = root ? '未找到 .scw 工程文件' : '未打开工程文件夹';
+        chipStatus.tooltip = root ? (scwMode ? '未配置 scmcu.device，无法脱离 .scw 编译' : '未找到 .scw 工程文件') : '未打开工程文件夹';
         chipStatus.show();
         cfgStatus.hide();
         buildStatus.hide();
+        srcStatus.hide();
     }
 }
 

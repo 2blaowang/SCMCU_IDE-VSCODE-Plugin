@@ -128,6 +128,26 @@ export function computeConfigWords(tpl: CfgTemplate, selections: Record<string, 
     return words;
 }
 
+// 从芯片配置模板推导该芯片的配置字数量（最大 word 索引 + 1）。
+// 仅作未知芯片的兜底估算；已知芯片以 scx.ts 的 CFG_WORD_COUNT 实测表为准
+// （SC8F072 模板只用到 word1，但烧录器实测按 4 槽，故该芯片以实测表 4 为准）。
+export function getChipConfigWordCount(idePath: string, device: string): number {
+    try {
+        const cfgPath = path.join(idePath, 'mcu', 'config', device + '.cfg');
+        if (!fs.existsSync(cfgPath)) return 0;
+        const tpl = parseCfgTemplate(cfgPath);
+        let maxWord = -1;
+        for (const sec of Object.keys(tpl)) {
+            for (const opt of Object.keys(tpl[sec])) {
+                for (const b of tpl[sec][opt]) {
+                    if (b.word > maxWord) maxWord = b.word;
+                }
+            }
+        }
+        return maxWord >= 0 ? maxWord + 1 : 0;
+    } catch { return 0; }
+}
+
 // 以 .scw 当前配置字为基底，只重算"本节选项涉及到的位"，
 // 保留模板未定义的隐藏位（如 SC8F072 word1 bit4）。保存硬件选项必须用这个。
 export function computeConfigWordsFromBase(tpl: CfgTemplate, selections: Record<string, string>, baseWords: number[], hexmcu: number): number[] {
@@ -170,4 +190,77 @@ export function detectCurrentSelections(tpl: CfgTemplate, words: number[]): Reco
         }
     }
     return sel;
+}
+
+// ===== 源文件管理：按行就地改写 .scw 的 SourceFile= =====
+// 顺序即编译顺序（XC8 psect 依赖），增删/重排都必须保持现有行的其它内容不动。
+
+export function addScwSourceFile(scwPath: string, name: string): void {
+    const text = fs.readFileSync(scwPath, 'utf-8');
+    const lines = text.split(/\r?\n/);
+    let lastIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+        if (/^SourceFile=/i.test(lines[i].trim())) lastIdx = i;
+    }
+    const newLine = `SourceFile=${name}`;
+    if (lastIdx >= 0) lines.splice(lastIdx + 1, 0, newLine);
+    else lines.push(newLine);
+    fs.writeFileSync(scwPath, lines.join('\n'), 'utf-8');
+}
+
+export function removeScwSourceFile(scwPath: string, name: string): boolean {
+    const text = fs.readFileSync(scwPath, 'utf-8');
+    const lines = text.split(/\r?\n/);
+    let removed = false;
+    for (let i = lines.length - 1; i >= 0; i--) {
+        const t = lines[i].trim();
+        if (/^SourceFile=/i.test(t) && t.split('=')[1].trim() === name) {
+            lines.splice(i, 1);
+            removed = true;
+            break;
+        }
+    }
+    if (removed) fs.writeFileSync(scwPath, lines.join('\n'), 'utf-8');
+    return removed;
+}
+
+// dir = -1 上移（靠近队首），+1 下移。仅交换两个 SourceFile 行的位置，其余内容不动。
+export function moveScwSourceFile(scwPath: string, name: string, dir: -1 | 1): boolean {
+    const text = fs.readFileSync(scwPath, 'utf-8');
+    const lines = text.split(/\r?\n/);
+    const idxs: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (/^SourceFile=/i.test(lines[i].trim())) idxs.push(i);
+    }
+    const pos = idxs.findIndex(i => lines[i].trim().split('=')[1].trim() === name);
+    if (pos < 0) return false;
+    const target = pos + dir;
+    if (target < 0 || target >= idxs.length) return false;
+    const a = idxs[pos], b = idxs[target];
+    const tmp = lines[a]; lines[a] = lines[b]; lines[b] = tmp;
+    fs.writeFileSync(scwPath, lines.join('\n'), 'utf-8');
+    return true;
+}
+
+// 扫描工程内可作为源文件的候选（排除已加入、build/node_modules/.git 等目录）
+export function listCandidateSources(workspaceRoot: string, current: string[]): string[] {
+    const out: string[] = [];
+    const exts = ['.c', '.asm', '.s'];
+    const skip = new Set(['build', 'node_modules', '.git', 'out', '.vscode', '.workbuddy']);
+    const curLower = new Set(current.map(c => c.toLowerCase()));
+    const walk = (dir: string): void => {
+        let entries: fs.Dirent[] = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+        for (const e of entries) {
+            const full = path.join(dir, e.name);
+            if (e.isDirectory()) { if (!skip.has(e.name)) walk(full); }
+            else if (exts.includes(path.extname(e.name).toLowerCase())) {
+                const rel = path.relative(workspaceRoot, full).split(path.sep).join('/');
+                const base = path.basename(rel).toLowerCase();
+                if (!curLower.has(rel.toLowerCase()) && !curLower.has(base)) out.push(rel);
+            }
+        }
+    };
+    walk(workspaceRoot);
+    return out.sort();
 }

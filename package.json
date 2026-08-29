@@ -2,7 +2,7 @@
   "name": "scmcu-vscode",
   "displayName": "SCMCU IDE (SC8 系列)",
   "description": "在 VS Code 中编译 SC8F/SC8P 系列单片机工程、配置硬件选项、生成 .scx 烧录文件（基于 SCMCU_IDE 工具链）",
-  "version": "0.8.0",
+  "version": "0.8.8",
   "publisher": "local",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -11,7 +11,7 @@
     "url": "https://github.com/2blaowang/SCMCU_IDE-VSCODE-Plugin.git"
   },
   "engines": {
-    "vscode": "^1.134.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "Other",
@@ -26,11 +26,15 @@
   ],
   "activationEvents": [
     "workspaceContains:**/*.scw",
+    "workspaceContains:**/*.{c,asm,s}",
     "onCommand:scmcu.build",
     "onCommand:scmcu.selectChip",
     "onCommand:scmcu.hardwareOptions",
     "onCommand:scmcu.configureCompiler",
-    "onCommand:scmcu.detectCompiler"
+    "onCommand:scmcu.detectCompiler",
+    "onCommand:scmcu.manageSources",
+    "onCommand:scmcu.setDevice",
+    "onCommand:scmcu.setConfigWords"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -56,6 +60,19 @@
       {
         "command": "scmcu.detectCompiler",
         "title": "SCMCU: 自动检测编译器"
+      },
+      {
+        "command": "scmcu.manageSources",
+        "title": "SCMCU: 源文件管理",
+        "icon": "$(file-directory)"
+      },
+      {
+        "command": "scmcu.setDevice",
+        "title": "SCMCU: 设置芯片型号 (脱离 .scw)"
+      },
+      {
+        "command": "scmcu.setConfigWords",
+        "title": "SCMCU: 设置配置字 (脱离 .scw)"
       }
     ],
     "menus": {
@@ -73,8 +90,7 @@
       ],
       "commandPalette": [
         {
-          "command": "scmcu.build",
-          "when": "workspaceContains:**/*.scw"
+          "command": "scmcu.build"
         },
         {
           "command": "scmcu.hardwareOptions",
@@ -83,6 +99,16 @@
         {
           "command": "scmcu.selectChip",
           "when": "workspaceContains:**/*.scw"
+        },
+        {
+          "command": "scmcu.manageSources",
+          "when": "workspaceContains:**/*.scw"
+        },
+        {
+          "command": "scmcu.setDevice"
+        },
+        {
+          "command": "scmcu.setConfigWords"
         }
       ]
     },
@@ -120,6 +146,23 @@
           "items": { "type": "string" },
           "default": ["inc"],
           "description": "头文件 include 目录（相对工程根目录；空字符串 = 根目录）。编译时会将这些目录加入 -I。"
+        },
+        "scmcu.device": {
+          "type": "string",
+          "default": "",
+          "description": "脱离 .scw 工程文件编译时使用的芯片型号（如 SC8F052A04）。留空则「脱离 .scw」编译报错提示配置。"
+        },
+        "scmcu.configWords": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "脱离 .scw 编译时使用的 4 个配置字（十六进制字符串，如 [\"0x1FFF\",\"0x3FFF\",\"0x3FFF\",\"0x3FFF\"]）。留空则用芯片默认未编程配置字（编译时给出警告，烧录前请核对硬件选项）。"
+        },
+        "scmcu.sourceFiles": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": [],
+          "description": "脱离 .scw 编译时使用的源文件清单（相对工程根目录，顺序敏感——即编译顺序）。空数组=自动扫描工程下所有 .c/.asm/.s；非空=使用此列表（按顺序编译），可用「源文件管理」面板维护。优先于自动扫描。"
         }
       }
     }
@@ -132,7 +175,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.19.43",
-    "@types/vscode": "^1.134.0",
+    "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^3.9.2",
     "typescript": "^5.9.3"
   }

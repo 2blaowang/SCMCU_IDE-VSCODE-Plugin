@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { spawn } from 'child_process';
 import * as vscode from 'vscode';
-import { findScwFile, parseScw, loadChipParams } from './chip';
+import { findScwFile, parseScw, loadChipParams, listCandidateSources, getChipConfigWordCount, ScwInfo } from './chip';
 import { findCompilerDir } from './compiler';
 import { hexToScx, calcCfgChecks } from './scx';
 
@@ -12,10 +12,34 @@ const diagCollection = vscode.languages.createDiagnosticCollection('scmcu');
 
 export async function buildProject(workspaceRoot: string, channel: vscode.OutputChannel): Promise<boolean> {
     diagCollection.clear();
+    const cfg = vscode.workspace.getConfiguration('scmcu');
     const scw = findScwFile(workspaceRoot);
-    if (!scw) { err(channel, '未找到 .scw 工程文件'); return false; }
-    const info = parseScw(scw);
-    if (!info.device) { err(channel, '.scw 中缺少 Device= 行'); return false; }
+    let info: ScwInfo;
+    if (scw) {
+        info = parseScw(scw);
+        if (!info.device) { err(channel, '.scw 中缺少 Device= 行'); return false; }
+    } else {
+        // ---- 脱离 .scw 模式：从插件设置合成工程信息 ----
+        const dev = cfg.get<string>('device', '');
+        if (!dev) {
+            err(channel, '未找到 .scw 工程文件，且未配置 scmcu.device。请在「设置 → 扩展 → SCMCU」中填写芯片型号，或放置 .scw 文件。');
+            return false;
+        }
+        const cw = (cfg.get<string[]>('configWords', []) || []).map(s => parseInt(s, 16) & 0xFFFF);
+        // scmcu.sourceFiles 非空 → 优先使用设置中的源文件清单（顺序与维护通过「源文件管理」面板）
+        //                       空 → 走自动扫描（按字母序扫工程下 .c/.asm/.s）
+        const overrideSources = (cfg.get<string[]>('sourceFiles', []) || []).filter(s => s && s.trim().length > 0);
+        info = { device: dev, sourceFiles: overrideSources, headFiles: [], configWords: cw, optValue: '', warningValue: '' };
+        if (overrideSources.length === 0) {
+            info.sourceFiles = listCandidateSources(workspaceRoot, []);
+        }
+        channel.appendLine(overrideSources.length > 0
+            ? '[SCMCU] ⚠️ 未找到 .scw，启用「脱离 .scw」编译模式（芯片来自 scmcu.device，源文件来自 scmcu.sourceFiles）'
+            : '[SCMCU] ⚠️ 未找到 .scw，启用「脱离 .scw」编译模式（芯片来自 scmcu.device，源文件自动扫描）');
+        if (cw.length === 0) {
+            channel.appendLine('[SCMCU] ⚠️ 未配置 scmcu.configWords，使用芯片默认未编程配置字——烧录前请务必核对硬件选项（振荡器/看门狗/LVR 等）。');
+        }
+    }
 
     const comp = findCompilerDir();
     if (!comp) {
@@ -23,7 +47,6 @@ export async function buildProject(workspaceRoot: string, channel: vscode.Output
         return false;
     }
     const params = loadChipParams(comp.idePath, info.device);
-    const cfg = vscode.workspace.getConfiguration('scmcu');
     const buildDir = path.join(workspaceRoot, cfg.get<string>('buildDir', 'build'));
     const outName = cfg.get<string>('outputName', 'SCMCU_Project');
     const sourceDirsCfg = cfg.get<string[]>('sourceDirs', ['src']);
@@ -88,7 +111,7 @@ export async function buildProject(workspaceRoot: string, channel: vscode.Output
     ];
 
     channel.appendLine('================ SCMCU 构建 ================');
-    channel.appendLine(`[SCMCU] 工程: ${path.basename(scw)}`);
+    channel.appendLine(`[SCMCU] 工程: ${scw ? path.basename(scw) : '(脱离 .scw 模式)'}`);
     channel.appendLine(`[SCMCU] 芯片: ${info.device}  ROM: ${params.romWords} word`);
     channel.appendLine(`[SCMCU] 编译器: ${path.join(comp.binDir, 'picc.exe')}`);
     channel.appendLine(`[SCMCU] 源文件(${srcs.length}): ${srcs.map(s => path.basename(s)).join(' ')}`);
@@ -110,7 +133,10 @@ export async function buildProject(workspaceRoot: string, channel: vscode.Output
         channel.appendLine('');
         channel.appendLine(`[SCMCU] 配置字: ${words.map(w => w.toString(16).toUpperCase().padStart(4, '0')).join(',')}`);
         channel.appendLine(`[SCMCU] 烧录文件: ${scxPath} (${scx.length} 字节)`);
-        const { sum, crc } = calcCfgChecks(scx, params.romWords);
+        // 配置槽数 = 该芯片的配置字数：calcCfgChecks 内部优先查 CFG_WORD_COUNT 实测表
+        // （.scw 的 config 会用 FFFF 补齐到 4 个，不能作为槽数依据，如 SC8F052=2 槽），
+        // 未收录芯片再用模板推导值兜底
+        const { sum, crc } = calcCfgChecks(scx, params.romWords, getChipConfigWordCount(comp.idePath, info.device) || undefined);
         channel.appendLine(`[SCMCU] CfgCRC(Hex) -- 0x${crc.toString(16).toUpperCase().padStart(4, '0')}  CfgSum(Hex) -- 0x${sum.toString(16).toUpperCase().padStart(4, '0')}`);
         channel.appendLine('[SCMCU] ✅ 构建成功');
         vscode.window.showInformationMessage(`SCMCU 构建成功: ${path.basename(scxPath)}`);
@@ -122,7 +148,7 @@ export async function buildProject(workspaceRoot: string, channel: vscode.Output
 }
 
 // 解析 SourceFile：带路径按字面拼；不带则按 sourceDirs → 根目录 → 常见目录兜底
-function resolveSource(f: string, workspaceRoot: string, sourceDirs: string[]): string | null {
+export function resolveSource(f: string, workspaceRoot: string, sourceDirs: string[]): string | null {
     if (f.includes('\\') || f.includes('/')) {
         const p = path.join(workspaceRoot, f);
         return fs.existsSync(p) ? p : null;

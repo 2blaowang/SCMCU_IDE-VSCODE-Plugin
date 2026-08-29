@@ -110,32 +110,67 @@ export function patchScxConfigWords(scxPath: string, chip: string, words: number
     return true;
 }
 
-// 计算 .scx 的 CfgSum 和 CfgCRC（从烧录器 Writer.Core.dll 反编译破译，双样本验证）
-// CfgSum = (Σ程序区字节 + Σ配置字区字节[低+高]) & 0xFFFF
-// CfgCRC = 链式 CRC16(poly=0x1021, init=0xFFFF, xorout=0): 先 CRC 程序区, 再以结果为初值继续 CRC 配置字区
-// 配置字数 = 0xA0 起连续非 0xFFFF 的槽位数（scx 补齐位不算）
-export function calcCfgChecks(scx: Buffer, romWords: number): { sum: number; crc: number } {
-    const progEnd = 0x100 + romWords * 2;
-    let n = 0;
-    for (let i = 0xA0; i + 1 <= 0xA8; i += 2) {
-        const w = scx[i] | (scx[i + 1] << 8);
-        if (w === 0xFFFF) break;
-        n++;
-    }
-    // CfgSum
-    let sum = 0;
-    for (let i = 0x100; i < progEnd; i++) sum = (sum + scx[i]) & 0xFFFF;
-    for (let i = 0xA0; i < 0xA0 + n * 2; i++) sum = (sum + scx[i]) & 0xFFFF;
-    // CfgCRC 链式
-    let crc = 0xFFFF;
+// 各芯片的配置字数量（烧录器按芯片数据库决定参与校验和的配置槽数；.scx 定长 4 槽，但只算前 N 槽）
+// 以实测/烧录器核对为准，不能看 .scw 列了几个（.scw 会用 FFFF 补齐到 4 个，如 SC8F052 的 config=3FFB,3FEF,FFFF,FFFF 实际只有 2 个字）：
+//   SC8F052 实测 2 槽（3FFB,3FEF → SUM A5AE / CRC 20CD）
+//   SC8F072 实测 4 槽（FFFF,FAEF,FFFF,FFFF → SUM 4619 / CRC EC0D；其 .cfg 模板虽只到 word1，但烧录器按 4 槽）
+// 未收录芯片：build.ts 会传芯片模板推导的配置字数；再兜底默认 4。
+const CFG_WORD_COUNT: Record<string, number> = {
+    SC8F052: 2,
+    SC8F072: 4,
+};
+
+// 非 CMS 内核芯片列表（Writer.Core 的 GetCheckSum 里：SUM 只加配置字低字节，高字节仅 CMSCore 芯片加）。
+// SC8F052 / SC8F072 实测均为 CMS 内核（低+高都加）。遇到非 CMS 内核芯片时在此登记芯片名。
+const NON_CMS_CORE: string[] = [];
+
+function readScxChipName(scx: Buffer): string {
+    let end = scx.indexOf(0x21); // '!'
+    if (end < 0) end = Math.min(scx.length, 0x9f);
+    return scx.toString('ascii', 0, end < 0 ? 0 : end);
+}
+
+// 计算 .scx 的 CfgSum 和 CfgCRC（算法与 Writer.Core.dll 反编译的 GetCheckSum / GetDataCRC16 一致）
+//   .scx 配置字区固定为 [0xA0,0xA8) 共 4 个槽（8 字节），但参与校验和的槽数 = 该芯片的配置字数量 N：
+//     SC8F052 = 2 槽（[0xA0,0xA4)）；SC8F072 = 4 槽（[0xA0,0xA8)）
+//   CfgCRC = 对 [程序区字节 + 前 N 个配置字槽字节（低+高）] 做 CRC-16/CCITT-FALSE (poly=0x1021, init=0xFFFF, xorout=0)
+//            （对应 GetDataCRC16: GetCRC16L_1021_FFFF_0000(0xFFFF, romDatas+bootRom+GetConfigByteDatas)）
+//   CfgSum = (Σ程序区字节 + Σ前 N 个配置字 [低字节 + (CMSCore ? 高字节 : 0)]) & 0xFFFF
+//            （对应 GetCheckSum: num2 += ConfigDatas[i] & 0xFF; if CMSCore num2 += ConfigDatas[i] >> 8）
+//   —— 实测样本（烧录器显示）：SC8F052: CfgSum=0xA5AE CfgCRC=0x20CD（2 槽）
+//      SC8F072: CfgSum=0x4619 CfgCRC=0xEC0D（4 槽）
+export function calcCfgChecks(scx: Buffer, romWords?: number, cfgWordCount?: number): { sum: number; crc: number } {
+    const progEnd = romWords !== undefined && romWords > 0 ? 0x100 + romWords * 2 : scx.length;
+    const prog = scx.subarray(0x100, progEnd);
+    const chip = readScxChipName(scx);
+
+    // 槽数优先级：实测芯片表 → build.ts 传入的推导值 → 默认 4
+    let n = CFG_WORD_COUNT[chip] !== undefined ? CFG_WORD_COUNT[chip] : (cfgWordCount !== undefined && cfgWordCount > 0 ? cfgWordCount : 4);
+    if (n < 0) n = 0;
+    if (n > 4) n = 4;
+    const cfg = scx.subarray(0xa0, 0xa0 + n * 2); // 前 n 个槽
+
+    // CfgCRC：程序区 → 配置字区（低+高字节，原值）
+    let crc = 0xffff;
     const step = (b: number) => {
         crc ^= b << 8;
         for (let k = 0; k < 8; k++) {
-            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xFFFF : (crc << 1) & 0xFFFF;
+            crc = (crc & 0x8000) ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
         }
     };
-    for (let i = 0x100; i < progEnd; i++) step(scx[i]);
-    for (let i = 0xA0; i < 0xA0 + n * 2; i++) step(scx[i]);
+    for (let i = 0; i < prog.length; i++) step(prog[i]);
+    for (let i = 0; i < cfg.length; i++) step(cfg[i]);
+
+    // CfgSum：程序区字节 + 配置字 [低字节 + (CMSCore ? 高字节 : 0)]
+    const isCmsCore = !NON_CMS_CORE.includes(chip);
+    let sum = 0;
+    for (let i = 0; i < prog.length; i++) sum = (sum + prog[i]) & 0xffff;
+    for (let i = 0; i < n; i++) {
+        const w = scx[0xa0 + i * 2] | (scx[0xa0 + i * 2 + 1] << 8);
+        sum = (sum + (w & 0xff)) & 0xffff;
+        if (isCmsCore) sum = (sum + ((w >> 8) & 0xff)) & 0xffff;
+    }
+
     return { sum, crc };
 }
 
