@@ -64,6 +64,27 @@ export function listChips(idePath: string): string[] {
         .sort();
 }
 
+// ---- 每芯片未编程配置字值表（仅当对应 .ini 缺失 HEXMCU 时作兜底） ----
+// 14-bit OTP 系列未编程 = 0x3FFF；16-bit OTP/Flash 系列 = 0xFFFF。
+// 优先使用 .ini 的 HEXMCU；若 .ini 缺失该字段（如 IDE 版本差异、型号带后缀无独立 .ini），
+// 则按芯片型号兜底，避免误用 0xFFFF 导致 14-bit 芯片出现 F 高位。
+const CHIP_HEXMCU_FALLBACK: Record<string, number> = {
+    SC8F052: 0x3FFF, SC8F054: 0x3FFF, SC8F051: 0x3FFF, SC8F050: 0x3FFF, SC8F070: 0x3FFF,
+    SC8F072: 0xFFFF, SC8F073: 0xFFFF, SC8F076: 0xFFFF,
+    SC8F062: 0xFFFF, SC8F063: 0xFFFF,
+    SC8P061: 0xFFFF, SC8P062: 0xFFFF,
+};
+function resolveHexmcu(device: string): number {
+    const u = device.toUpperCase();
+    if (CHIP_HEXMCU_FALLBACK[u] !== undefined) return CHIP_HEXMCU_FALLBACK[u];
+    // 按系列前缀兜底：SC8F05x / SC8F070 等 14-bit，SC8F07x 为 16-bit
+    if (/^SC8F0(5[0-9]|7[0-9])/.test(u)) {
+        return /^SC8F07[2-9]/.test(u) ? 0xFFFF : 0x3FFF;
+    }
+    if (u.startsWith('FC') || u.startsWith('SC8P')) return 0xFFFF;
+    return 0xFFFF; // 未知默认 16-bit，保留原行为避免回归
+}
+
 // ---- 芯片参数：从 mcu/ini/<chip>.ini 读 ROMSIZE / HEXMCU ----
 export interface ChipParams { romWords: number; hexmcu: number; }
 
@@ -78,10 +99,11 @@ export function loadChipParams(idePath: string, device: string): ChipParams {
             if (idx > 0) d[line.slice(0, idx).trim().toUpperCase()] = line.slice(idx + 1).trim();
         }
         const romsize = parseInt(d['ROMSIZE'] || '3FF', 16);
-        const hexmcu = parseInt(d['HEXMCU'] || 'FFFF', 16);
+        const iniHex = (d['HEXMCU'] || '').trim();
+        const hexmcu = iniHex ? parseInt(iniHex, 16) : resolveHexmcu(device);
         return { romWords: romsize + 1, hexmcu };
     }
-    return { romWords: 1024, hexmcu: 0x3FFF }; // 默认 SC8F052
+    return { romWords: 1024, hexmcu: resolveHexmcu(device) };
 }
 
 // ---- cfg 选项模板：mcu/config/<chip>.cfg ----
@@ -173,7 +195,41 @@ export function computeConfigWordsFromBase(tpl: CfgTemplate, selections: Record<
             else words[word] &= ~(1 << bit);
         }
     }
+    // 位宽 mask：每个配置字只保留芯片未编程位（hexmcu 中为 1 的位），
+    // 清除基底里超出芯片实际位宽的高位，避免 14-bit 芯片出现 F 高位（与 IDE 一致）
+    for (let w = 0; w < words.length; w++) words[w] &= hexmcu;
     return words;
+}
+
+// 配置字规范化核心（纯计算，供“SCMCU: 规范化配置字”命令与回归测试复用）。
+// 背景：14-bit 芯片（未编程 0x3FFF）工程若基底来自 16-bit 芯片（如 SC8F072 的
+// FFFB,FAEF,FFFF,FFFF）会出现高位错误；本函数把“模板未定义位”（芯片固定位）按芯片
+// 位宽复位，模板已定义位（硬件选项覆盖的位）保留基底当前值，末尾统一按 hexmcu 清高位。
+// 幂等：对已规范化 / 未编程工程重复执行结果不变；纯 16 位芯片（hexmcu=0xFFFF）只做
+// 位宽 mask，不重置未定义位，避免把 FAEF 这类已正确配置（bit4/8/10=0）的隐藏位误改。
+export function normalizeConfigWordsCore(baseWords: number[], device: string, idePath: string): number[] {
+    const cfgPath = path.join(idePath, 'mcu', 'config', device + '.cfg');
+    if (!fs.existsSync(cfgPath)) return baseWords.slice(); // 模板缺失时不改动（调用方已先报错）
+    const tpl = parseCfgTemplate(cfgPath);
+    const hexmcu = loadChipParams(idePath, device).hexmcu;
+    const defined = new Set<string>();
+    for (const sec of Object.keys(tpl)) {
+        for (const opt of Object.keys(tpl[sec])) {
+            for (const { word, bit } of tpl[sec][opt]) defined.add(word + ':' + bit);
+        }
+    }
+    const fullWidth = (hexmcu & 0xFFFF) === 0xFFFF;
+    const resolved = baseWords.slice();
+    for (let w = 0; w < resolved.length; w++) {
+        for (let b = 0; b < 16; b++) {
+            if (!defined.has(w + ':' + b) && !fullWidth) {
+                if ((hexmcu >> b) & 1) resolved[w] |= (1 << b);
+                else resolved[w] &= ~(1 << b);
+            }
+        }
+        resolved[w] &= hexmcu;
+    }
+    return resolved;
 }
 
 // 反查：给定配置字，找出每个节当前匹配的选项名（用于回显）

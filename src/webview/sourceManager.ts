@@ -176,6 +176,11 @@ export function showSourceManager(context: vscode.ExtensionContext, workspaceRoo
                 [cur[i], cur[j]] = [cur[j], cur[i]];
                 await persist(cur);
                 render();
+            } else if (msg.type === 'reorder') {
+                if (!Array.isArray(msg.order) || msg.order.length === 0) return;
+                await persist(msg.order.map(String));
+                channel.appendLine(`[SCMCU] 已通过拖拽调整源文件顺序`);
+                render();
             }
         } catch (e: any) {
             vscode.window.showErrorMessage('源文件操作失败: ' + e.message);
@@ -193,7 +198,7 @@ function renderHtml(d: PanelData): string {
     const isScwLess = d.mode === 'scwless';
     const subLine = isScwLess
         ? `目标: ${d.scwName} ｜ 模式: 脱离 .scw（保存将写入 scmcu.sourceFiles 工作区设置；当前未设置→回退到自动扫描）`
-        : `工程: ${d.scwName} ｜ 顺序即编译顺序（上移=更靠前）；修改即时写回 .scw`;
+        : `工程: ${d.scwName} ｜ 顺序即编译顺序（可拖动行或使用 ▲▼ 调整）；修改即时写回 .scw`;
     let rows = '';
     if (d.files.length === 0) {
         rows = '<li class="empty">当前没有源文件，点击上方「+ 添加源文件」</li>';
@@ -205,7 +210,7 @@ function renderHtml(d: PanelData): string {
             const pathTxt = f.missing
                 ? `<span class="warn">⚠ 未找到（检查 scmcu.sourceDirs 或加子目录前缀）</span>`
                 : `<span class="path">${esc(f.resolved)}</span>`;
-            rows += `<li>
+            rows += `<li draggable="true" data-name="${esc(f.name)}">
       <span class="idx">${i + 1}</span>
       <span class="name">${esc(f.name)}</span>
       ${pathTxt}
@@ -257,7 +262,10 @@ li.empty { opacity: .7; color: var(--vscode-foreground); justify-content: center
   padding: 3px 9px; font-size: 12px;
 }
 .acts button:hover:not([disabled]) { background: var(--vscode-button-hoverBackground); color: var(--vscode-button-foreground); }
+# Edit2
 .acts button[disabled] { opacity: .35; cursor: default; }
+li.dragging { opacity: .4; border-style: dashed; }
+li.drag-over { border-color: var(--vscode-focusBorder); box-shadow: inset 0 0 0 1px var(--vscode-focusBorder); }
 </style>
 </head>
 <body>
@@ -268,6 +276,8 @@ li.empty { opacity: .7; color: var(--vscode-foreground); justify-content: center
 <script nonce="${nonce}">
 (function () {
   var vscode = acquireVsCodeApi();
+  var list = document.querySelector('ul.list');
+
   document.getElementById('add').addEventListener('click', function () {
     vscode.postMessage({ type: 'add' });
   });
@@ -276,6 +286,56 @@ li.empty { opacity: .7; color: var(--vscode-foreground); justify-content: center
       vscode.postMessage({ type: b.getAttribute('data-act'), name: b.getAttribute('data-name') });
     });
   });
+
+  // ---- 拖拽排序 ----
+  function orderFromDom() {
+    return Array.prototype.slice.call(list.querySelectorAll('li[data-name]'))
+      .map(function (li) { return li.getAttribute('data-name'); });
+  }
+  function commitReorder() {
+    vscode.postMessage({ type: 'reorder', order: orderFromDom() });
+  }
+  Array.prototype.slice.call(list.querySelectorAll('li[data-name]')).forEach(function (li) {
+    li.addEventListener('dragstart', function (e) {
+      e.dataTransfer.setData('text/plain', li.getAttribute('data-name'));
+      e.dataTransfer.effectAllowed = 'move';
+      li.classList.add('dragging');
+    });
+    li.addEventListener('dragend', function () {
+      li.classList.remove('dragging');
+      Array.prototype.slice.call(list.querySelectorAll('.drag-over')).forEach(function (x) { x.classList.remove('drag-over'); });
+    });
+    li.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      li.classList.add('drag-over');
+    });
+    li.addEventListener('dragleave', function () {
+      li.classList.remove('drag-over');
+    });
+    li.addEventListener('drop', function (e) {
+      e.preventDefault();
+      e.stopPropagation();
+      li.classList.remove('drag-over');
+      var fromName = e.dataTransfer.getData('text/plain');
+      var dragged = list.querySelector('li[data-name="' + cssEsc(fromName) + '"]');
+      if (!dragged || dragged === li) { return; }
+      list.insertBefore(dragged, li);
+      commitReorder();
+    });
+  });
+  // 拖到列表空白处 → 放到末尾
+  list.addEventListener('dragover', function (e) { e.preventDefault(); });
+  list.addEventListener('drop', function (e) {
+    e.preventDefault();
+    var fromName = e.dataTransfer.getData('text/plain');
+    var dragged = list.querySelector('li[data-name="' + cssEsc(fromName) + '"]');
+    if (dragged) { list.appendChild(dragged); commitReorder(); }
+  });
+  // 转义属性选择器中的特殊字符（文件名含引号/方括号等）
+  function cssEsc(s) {
+    return s.replace(/["\\]/g, '\\$&').replace(/[\\[\]]/g, '\\$&');
+  }
 })();
 </script>
 </body>

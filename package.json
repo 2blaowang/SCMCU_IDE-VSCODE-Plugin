@@ -2,7 +2,7 @@
   "name": "scmcu-vscode",
   "displayName": "SCMCU IDE (SC8 系列)",
   "description": "在 VS Code 中编译 SC8F/SC8P 系列单片机工程、配置硬件选项、生成 .scx 烧录文件（基于 SCMCU_IDE 工具链）",
-  "version": "0.8.8",
+  "version": "0.9.0",
   "publisher": "local",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -45,6 +45,10 @@
         "icon": "$(debug-start)"
       },
       {
+        "command": "scmcu.buildAndFlash",
+        "title": "SCMCU: 一键编译下载"
+      },
+      {
         "command": "scmcu.hardwareOptions",
         "title": "SCMCU: 芯片设置",
         "icon": "$(settings-gear)"
@@ -73,6 +77,14 @@
       {
         "command": "scmcu.setConfigWords",
         "title": "SCMCU: 设置配置字 (脱离 .scw)"
+      },
+      {
+        "command": "scmcu.startup",
+        "title": "SCMCU: 启动"
+      },
+      {
+        "command": "scmcu.fixConfigWords",
+        "title": "SCMCU: 规范化配置字"
       }
     ],
     "menus": {
@@ -109,6 +121,15 @@
         },
         {
           "command": "scmcu.setConfigWords"
+        },
+        {
+          "command": "scmcu.startup"
+        },
+        {
+          "command": "scmcu.fixConfigWords"
+        },
+        {
+          "command": "scmcu.buildAndFlash"
         }
       ]
     },
@@ -137,14 +158,22 @@
         },
         "scmcu.sourceDirs": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["src"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "src"
+          ],
           "description": "C 源文件目录（相对工程根目录；空字符串 = 根目录）。.scw 里的 SourceFile 裸名将按此顺序查找，找不到再找根目录和常见目录(src/source)。"
         },
         "scmcu.includeDirs": {
           "type": "array",
-          "items": { "type": "string" },
-          "default": ["inc"],
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "inc"
+          ],
           "description": "头文件 include 目录（相对工程根目录；空字符串 = 根目录）。编译时会将这些目录加入 -I。"
         },
         "scmcu.device": {
@@ -154,15 +183,44 @@
         },
         "scmcu.configWords": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "脱离 .scw 编译时使用的 4 个配置字（十六进制字符串，如 [\"0x1FFF\",\"0x3FFF\",\"0x3FFF\",\"0x3FFF\"]）。留空则用芯片默认未编程配置字（编译时给出警告，烧录前请核对硬件选项）。"
         },
         "scmcu.sourceFiles": {
           "type": "array",
-          "items": { "type": "string" },
+          "items": {
+            "type": "string"
+          },
           "default": [],
           "description": "脱离 .scw 编译时使用的源文件清单（相对工程根目录，顺序敏感——即编译顺序）。空数组=自动扫描工程下所有 .c/.asm/.s；非空=使用此列表（按顺序编译），可用「源文件管理」面板维护。优先于自动扫描。"
+        },
+        "scmcu.noScwBehavior": {
+          "type": "string",
+          "enum": [
+            "prompt",
+            "load",
+            "skip"
+          ],
+          "default": "prompt",
+          "enumDescriptions": [
+            "每次打开找不到 .scw 的工作区时弹窗询问是否加载插件",
+            "不再弹窗，直接加载插件（脱离 .scw 模式）",
+            "不再弹窗，且不加载插件（视为非 SCMCU 工程）"
+          ],
+          "description": "找不到 .scw 文件时的行为。prompt=弹窗询问；load=直接加载；skip=不加载。弹窗中的「记住并加载 / 记住并不加载」会写入此项。"
+        },
+        "scmcu.writerPath": {
+          "type": "string",
+          "default": "",
+          "description": "SCMCU Writer（编程器上位机）安装目录，如 F:/Work/SCMCU_Writer_V9.01.16。留空时自动扫描盘符根目录下 SCMCU_Writer* 目录。"
+        },
+        "scmcu.flashCount": {
+          "type": "number",
+          "default": 1,
+          "description": "一键下载的烧录片数（WriterCount，默认 1）。"
         }
       }
     }
@@ -171,6 +229,7 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
+    "test": "node test/configWords.regression.js && node test/programmer.regression.js",
     "package": "vsce package --allow-missing-repository"
   },
   "devDependencies": {

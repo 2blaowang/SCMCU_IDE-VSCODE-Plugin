@@ -3,3 +3,5 @@ out/
 *.vsix
 .vscode/
 test-logic.js
+build/
+flash/*.exe
