@@ -8,7 +8,7 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import {
     findScwFile, parseScw,
-    addScwSourceFile, removeScwSourceFile, moveScwSourceFile, listCandidateSources,
+    setScwSourceFiles, listCandidateSources,
 } from '../chip';
 import { resolveSource } from '../build';
 
@@ -58,40 +58,9 @@ export function showSourceManager(context: vscode.ExtensionContext, workspaceRoo
         const cfg = vscode.workspace.getConfiguration('scmcu');
         const scw = findScwFile(workspaceRoot);
         if (scw) {
-            // 简化策略：完全覆写 SourceFile= 段（保留行尾其它段）。当前 scw 写入函数是行级 add/remove/move，
-            // 顺序调整按 move 实现复杂。改成：先清空原 SourceFile 段，再 add 全部。
-            // 但 chip.ts 没有 clearAllSourceFile。改成差量：move 调整到目标顺序。
-            // 简化：连续 swap 直到和目标一致。
-            const current = parseScw(scw).sourceFiles.slice();
-            // 目标：files（按用户当前顺序）
-            // 算法：把 current 变换到 files（相同集合、相同顺序）
-            // 双向比较：只在必要时移动
-            const desired = files.slice();
-            // 简单实现：若 current === desired，直接返回；否则 move 逐步调整
-            // 先检测差集（必须有相同集合）
-            const curSet = new Set(current), desSet = new Set(desired);
-            if (curSet.size !== desSet.size || [...curSet].some(x => !desSet.has(x))) {
-                throw new Error('源文件集合与 .scw 不一致，请重新打开面板');
-            }
-            // 用 move 把 current 调整为 desired
-            for (let i = 0; i < desired.length; i++) {
-                const target = desired[i];
-                // 当前 current[i] 应为目标
-                if (current[i] === target) continue;
-                const fromIdx = current.indexOf(target);
-                if (fromIdx < 0) continue;
-                // 把 fromIdx 移到 i（通过一系列 swap）
-                let j = fromIdx;
-                while (j > i) {
-                    moveScwSourceFile(scw, current[j], -1);
-                    j--;
-                }
-                while (j < i) {
-                    moveScwSourceFile(scw, current[j], 1);
-                    j++;
-                }
-                current.splice(i, 0, current.splice(j, 1)[0]);
-            }
+            // 整体覆写 SourceFile= 段：新增 / 删除 / 重排 都支持，集合可变化。
+            // 不再要求与当前集合一致（旧逻辑在增删时会误报「源文件集合与 .scw 不一致」）。
+            setScwSourceFiles(scw, files);
         } else {
             // scw-less：直接覆写 scmcu.sourceFiles
             await cfg.update('sourceFiles', files, vscode.ConfigurationTarget.Workspace);

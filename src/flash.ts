@@ -76,7 +76,8 @@ export async function flashScx(
     }
 
     const args = ['--writer', writer, '--scx', scxPath, '--pid', normal.pidHex];
-    if (count > 1) args.push('--count', String(count));
+    // count=0 表示无限(不传 --count，助手默认无限)；>0 才作为烧写次数上限传入
+    if (count > 0) args.push('--count', String(count));
     if (probe) args.push('--probe');
 
     channel.appendLine(`[SCMCU] 烧录助手: ${path.basename(helperExe)}  编程器: ${normal.name} (PID 0x${normal.pidHex})`);

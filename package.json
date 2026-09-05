@@ -2,7 +2,7 @@
   "name": "scmcu-vscode",
   "displayName": "SCMCU IDE (SC8 系列)",
   "description": "在 VS Code 中编译 SC8F/SC8P 系列单片机工程、配置硬件选项、生成 .scx 烧录文件（基于 SCMCU_IDE 工具链）",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "publisher": "local",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -219,8 +219,8 @@
         },
         "scmcu.flashCount": {
           "type": "number",
-          "default": 1,
-          "description": "一键下载的烧录片数（WriterCount，默认 1）。"
+          "default": 0,
+          "description": "脱机烧写次数上限（WriterCount，0=无限，默认0）。0 表示编程器可不限次数烧录；设为正整数则限制编程器对该固件的可烧录次数（量产防超烧用）。注意：此值不是“烧录片数”，而是“该固件最多能被烧多少次”。"
         }
       }
     }

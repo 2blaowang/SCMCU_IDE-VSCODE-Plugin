@@ -298,6 +298,24 @@ export function moveScwSourceFile(scwPath: string, name: string, dir: -1 | 1): b
     return true;
 }
 
+// 整体覆写 .scw 的 SourceFile= 段：移除全部旧 SourceFile 行后，
+// 在首个旧 SourceFile 行所在位置（若原本没有则追加到文件末尾）按序插入新列表。
+// 其余内容（[PROJECT]/[FILE]、Device=、config=、HeadFile= 等）一律保留。
+// 适用于 新增 / 删除 / 重排 —— 集合可变化，不再要求与当前一致。
+export function setScwSourceFiles(scwPath: string, names: string[]): void {
+    const text = fs.readFileSync(scwPath, 'utf-8');
+    const lines = text.split(/\r?\n/);
+    const srcIdx: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+        if (/^SourceFile=/i.test(lines[i].trim())) srcIdx.push(i);
+    }
+    for (let k = srcIdx.length - 1; k >= 0; k--) lines.splice(srcIdx[k], 1);
+    const insertAt = srcIdx.length > 0 ? srcIdx[0] : lines.length;
+    const newLines = names.map(n => `SourceFile=${n}`);
+    lines.splice(insertAt, 0, ...newLines);
+    fs.writeFileSync(scwPath, lines.join('\n'), 'utf-8');
+}
+
 // 扫描工程内可作为源文件的候选（排除已加入、build/node_modules/.git 等目录）
 export function listCandidateSources(workspaceRoot: string, current: string[]): string[] {
     const out: string[] = [];

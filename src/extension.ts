@@ -66,7 +66,8 @@ function startScmcu(context: vscode.ExtensionContext): void {
             vscode.window.showErrorMessage('未找到烧录文件（编译应已生成 .scx）: ' + scxPath);
             return;
         }
-        const count = Math.max(1, cfg.get<number>('flashCount', 1) || 1);
+        // 脱机烧写次数上限：0=无限（默认），>0=限次。不可强制最小 1，否则会锁成“烧一次即耗尽”。
+        const count = cfg.get<number>('flashCount', 0) || 0;
         const helper = context.asAbsolutePath(path.join('flash', 'ScmcuFlashHelper.exe'));
         const r = await flashScx(scxPath, helper, channel, count, false);
         if (r.ok) {

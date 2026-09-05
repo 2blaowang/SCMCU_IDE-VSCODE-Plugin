@@ -1,7 +1,7 @@
-# SCMCU IDE for VS Code（SC8 系列单片机）
+﻿# SCMCU IDE for VS Code（SC8 系列单片机）
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.9.0-orange.svg)](https://github.com/2blaowang/SCMCU_IDE-VSCODE-Plugin/releases)
+[![Version](https://img.shields.io/badge/version-0.9.1-orange.svg)](https://github.com/2blaowang/SCMCU_IDE-VSCODE-Plugin/releases)
 
 **仓库地址（国内建议走 Gitee）：**
 
@@ -253,6 +253,7 @@ python flash/build_helper.py   # 产物 flash/ScmcuFlashHelper.exe（x86 / .NET 
 
 ## 版本历史
 
+- **v0.9.1** — ① **脱机烧录「找不到芯片」修复**：一键下载时写入正确的脱机选项 OfflineOption0/1（POWER=0，即官方默认 0xE8/0xE0），不再误用全局默认 0xFF（POWER=7），修掉「插件下载后按编程器烧录键找不到芯片」；② **脱机烧录「烧写次数不足」修复**：烧写次数上限默认改为无限（0=无限），`scmcu.flashCount` 设正整数可作量产限次；③ **源文件管理器死循环修复**：面板增删/排序改为整体覆写 `.scw` 的 SourceFile 段，在目录里删除源文件后也能正常从面板移除失效条目，不再报「源文件集合与 .scw 不一致」卡死
 - **v0.9.0** — ① **配置字规范化**：每芯片 HEXMCU 兜底表 + 配置字位宽 mask + `SCMCU: 规范化配置字`，scw-less 加载时自动执行一次，修复从 16-bit 工程串来的高位错误（SC8F072 隐藏位有 fullWidth 守卫不误改）；② **编程器识别**：底栏右侧实时显示 SCMCU 编程器型号（PID 表来自 Writer.Core 反编译，聚焦 5s 轮询，升级模式标注 Boot）；③ **一键编译下载** `SCMCU: 一键编译下载` / 底栏 `$(zap) 编译下载`：spawn 烧录助手（引用 Writer.Core.dll 芯片库 + USB HID 协议）走 0x61/0x21/分段下发/0x60 校验/0x50 结束全时序，真机实烧闭环验证通过（SC8F052 含 EE 段）；④ 回归测试 `npm test`（15 + 17 断言）
 - **v0.8.4** — 脱离 .scw 模式下面板全可用：状态栏「芯片设置」「源文件」两按钮在 scw / scw-less 两种模式都显示；芯片设置面板写 `scmcu.configWords`、源文件面板维护 `scmcu.sourceFiles`（可控制编译顺序）；新增 `SCMCU: 设置芯片型号/设置配置字` 命令面板入口
 - **v0.8.3** — 命令面板新增 `SCMCU: 设置芯片型号/设置配置字 (脱离 .scw)`，用输入框直接写工作区设置；`engines.vscode` 从异常的 `^1.134.0` 修正为 `^1.85.0`，避免旧版 VS Code 判为不兼容

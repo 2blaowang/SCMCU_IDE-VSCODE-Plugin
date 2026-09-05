@@ -17,7 +17,8 @@
 //
 // 用法：
 //   ScmcuFlashHelper.exe --writer <Writer安装目录> --scx <固件.scx>
-//        [--vid 1209] [--pid 0201] [--mcu SC8F052] [--count 1] [--annotation 注解] [--probe]
+//        [--vid 1209] [--pid 0201] [--mcu SC8F052] [--count 0] [--annotation 注解] [--probe]
+//   --count: 脱机烧写次数上限(WriterCount)，0=无限(默认)；设正整数则限制编程器可烧录次数。
 // 输出：stdout UTF-8 分步状态行（[STEP] / [OK] / [ERROR]），退出码 0=成功。
 //
 using System;
@@ -31,16 +32,18 @@ namespace ScmcuFlash
     {
         private static string _writerDir = "";
 
-        private sealed class Opts
-        {
-            public int Vid = 0x1209;
-            public int Pid = 0x0201;
-            public int Count = 1;
-            public string Scx = "";
-            public string Mcu = "";
-            public string Annotation = "";
-            public bool Probe;
-        }
+    private sealed class Opts
+    {
+        public int Vid = 0x1209;
+        public int Pid = 0x0201;
+        public int Count = 0;   // 脱机烧写次数上限(WriterCount)：0=无限
+        public string Scx = "";
+        public string Mcu = "";
+        public string Annotation = "";
+        public bool Probe;
+        public int Opt0 = -1;   // 脱机选项0(OfflineOption0)，-1=使用默认 0xE8
+        public int Opt1 = -1;   // 脱机选项1(OfflineOption1)，-1=使用默认 0xE0
+    }
 
         [STAThread]
         private static int Main(string[] args)
@@ -58,13 +61,15 @@ namespace ScmcuFlash
                     case "--pid": if (i + 1 < args.Length) o.Pid = ParseHex(args[++i], o.Pid); break;
                     case "--count": if (i + 1 < args.Length) int.TryParse(args[++i], out o.Count); break;
                     case "--annotation": if (i + 1 < args.Length) o.Annotation = args[++i]; break;
+                    case "--opt0": if (i + 1 < args.Length) o.Opt0 = ParseHex(args[++i], o.Opt0); break;
+                    case "--opt1": if (i + 1 < args.Length) o.Opt1 = ParseHex(args[++i], o.Opt1); break;
                     case "--probe": o.Probe = true; break;
                 }
             }
 
             if (string.IsNullOrEmpty(_writerDir) || string.IsNullOrEmpty(o.Scx) || !File.Exists(o.Scx))
             {
-                Console.Error.WriteLine("[ERROR] 用法: ScmcuFlashHelper.exe --writer <Writer目录> --scx <固件.scx> [--pid 0201] [--mcu SC8F052]");
+                Console.Error.WriteLine("[ERROR] 用法: ScmcuFlashHelper.exe --writer <Writer目录> --scx <固件.scx> [--pid 0201] [--mcu SC8F052] [--count 0] [--opt0 E8] [--opt1 E0] [--probe]");
                 return 2;
             }
             try { _writerDir = Path.GetFullPath(_writerDir); } catch { }
@@ -195,11 +200,25 @@ namespace ScmcuFlash
 
             // ---- 5) CRC16 汇总 + 下载参数 ----
             cms_writer.Global.GetAllCRC();
-            if (o.Count < 1) o.Count = 1;
+            if (o.Count < 0) o.Count = 0;
             if (o.Count > 0xFFFF) o.Count = 0xFFFF;
-            cms_writer.Global.WriterCount = (uint)o.Count;
+            // WriterCount = 脱机烧写次数上限，写入 0x61 帧；0 表示无限（uint.MaxValue）。
+            // 注意：这并非“烧录片数”，而是“该固件最多能被编程器烧多少次”，默认无限，
+            // 否则会被锁成 1 次 → 按一次烧录键即耗尽报“烧写次数不足”。
+            cms_writer.Global.WriterCount = (o.Count == 0) ? uint.MaxValue : (uint)o.Count;
             cms_writer.Global.ImageAnnotation = o.Annotation;
-            Console.WriteLine("[STEP] 下载参数: 片数=" + o.Count + (o.Annotation.Length > 0 ? " 注解=" + o.Annotation : ""));
+            Console.WriteLine("[STEP] 烧写次数上限=" + (o.Count == 0 ? "无限" : o.Count.ToString()) + (o.Annotation.Length > 0 ? " 注解=" + o.Annotation : ""));
+
+            // ---- 脱机烧录选项(OfflineOption) ----
+            // 决定编程器脱机按键烧录时的供电/接口(POWER)方式。若缺失或停在默认的 0xFF，
+            // 编程器会用 POWER=7 的错误供电方式去识别座内芯片 → 报"找不到芯片"。
+            // 官方 Writer 软件默认勾选状态对应 OfflineOption0=0xE8 / OfflineOption1=0xE0（POWER=0）。
+            int opt0 = (o.Opt0 >= 0) ? (o.Opt0 & 0xFF) : 0xE8;
+            int opt1 = (o.Opt1 >= 0) ? (o.Opt1 & 0xFF) : 0xE0;
+            cms_writer.Global.OfflineOption0 = (byte)opt0;
+            cms_writer.Global.OfflineOption1 = (byte)opt1;
+            Console.WriteLine(string.Format("[STEP] 脱机选项 OfflineOption0=0x{0:X2} OfflineOption1=0x{1:X2} (POWER={2})",
+                opt0, opt1, opt0 & 7));
 
             // ---- probe：只做链路验证，不发任何写命令（不烧录）----
             if (o.Probe)
