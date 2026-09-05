@@ -2,7 +2,7 @@
   "name": "scmcu-vscode",
   "displayName": "SCMCU IDE (SC8 系列)",
   "description": "在 VS Code 中编译 SC8F/SC8P 系列单片机工程、配置硬件选项、生成 .scx 烧录文件（基于 SCMCU_IDE 工具链）",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "publisher": "local",
   "license": "MIT",
   "icon": "images/icon.png",
