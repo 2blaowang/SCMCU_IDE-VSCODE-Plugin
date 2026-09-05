@@ -185,6 +185,15 @@ namespace ScmcuFlash
                 Console.Error.WriteLine("[ERROR] 芯片库中未找到型号 " + chipName + "（当前 Writer 的数据库或机型不支持？）");
                 return 4;
             }
+            // 调试：输出芯片级参数（官方 GUI 的 UpdatePowerItems 按 VDDType 决定 POWER 下拉允许项，
+            // 默认选第一项 → 脱机 POWER 码 = VDDType 中最低的置位码。见 FrmMain.GetConfigurationInfos）
+            Console.WriteLine(string.Format("[DBG] mcu.VDDType=0x{0:X2} McuType={1} Series={2} Type={3} McuCrafts={4} EepromSize={5}",
+                (int)cms_writer.Global.mcu.VDDType,
+                cms_writer.Global.mcu.McuType,
+                cms_writer.Global.mcu.Series,
+                cms_writer.Global.mcu.Type,
+                cms_writer.Global.mcu.McuCrafts,
+                cms_writer.Global.mcu.EepromSize));
 
             cms_writer.CmxFileDataProcessor proc = new cms_writer.CmxFileDataProcessor(o.Scx);
             if (!proc.ReadDatas())
@@ -220,6 +229,19 @@ namespace ScmcuFlash
             Console.WriteLine(string.Format("[STEP] 脱机选项 OfflineOption0=0x{0:X2} OfflineOption1=0x{1:X2} (POWER={2})",
                 opt0, opt1, opt0 & 7));
 
+            // ---- wafer 晶圆/修调数据（官方 Run.StartDownload 在 0x60 校验前会下发，缺省会漏掉）----
+            // 数据源 ./data/writer.fdat（存在则走加密读取）。某些 FLASH 系列（如 SC8F072 Series=62）
+            // 在 wafer 表内有修调数据，脱机按键烧录时需要；跳过后按键烧录会失败/识别异常。
+            // LoadDataBySeriesId 返回：-1 文件未加载 / -2 无该系列(视为空,跳过) / -3 长度越界；>=0 命中。
+            cms_writer.Global.WaferDataProcessor.StartLoadFileThread();
+            CMS.Writer.WaferBinData.WaferBinDataBase wafer = new CMS.Writer.WaferBinData.WaferBinDataBase();
+            int waferSt = cms_writer.Global.WaferDataProcessor.GetWaferBinDataBySeriesId(
+                (ushort)cms_writer.Global.mcu.Series, (byte)cms_writer.Global.TarWriterType, wafer);
+            if (waferSt == -1 || waferSt == -3)
+                Console.WriteLine("[WARN] wafer 修调数据加载异常 状态=" + waferSt + "（继续，无修调数据下发）");
+            Console.WriteLine(string.Format("[STEP] wafer: Series={0} 状态={1} 数据={2} B (WriterTypeData=0x{3:X2})",
+                cms_writer.Global.mcu.Series, waferSt, wafer.WaferBinDataSize, wafer.WriterTypeData));
+
             // ---- probe：只做链路验证，不发任何写命令（不烧录）----
             if (o.Probe)
             {
@@ -248,6 +270,14 @@ namespace ScmcuFlash
             if (cms_writer.Global.mcu.BootRomDatas.Count > 0 &&
                 !sc.SendDataCmd(cms_writer.UsbCommandType.CMD_DOWNLOAD_BOOTROM, cms_writer.Global.mcu.BootRomDatas)) return Fail(sc, usb, "BootROM 下载失败");
             if (cms_writer.Global.mcu.BootRomDatas.Count > 0) Console.WriteLine("[STEP] BootROM 数据段 OK");
+
+            // wafer 修调数据下发（官方 StartDownload 在 0x60 校验前的固定步骤）
+            if (waferSt >= 0 && wafer.WaferBinDataSize > 0)
+            {
+                if (!sc.SendWaferBinDataCmd(wafer.WaferBinDatas)) return Fail(sc, usb, "wafer 修调数据下发失败");
+                if (!sc.WriteWaferBinDataInfo(0, cms_writer.Global.mcu.ImageSize, (ushort)wafer.WaferBinDataSize)) return Fail(sc, usb, "wafer 信息写入失败");
+                Console.WriteLine("[STEP] wafer 修调数据段 OK (" + wafer.WaferBinDataSize + " B)");
+            }
 
             if (sc.SendVerifyDownload() != cms_writer.E_ERROR_TYPE.NO_ERROR) return Fail(sc, usb, "0x60 校验失败（芯片可能未放好或为空白片）");
             Console.WriteLine("[STEP] 0x60 整段校验 OK");

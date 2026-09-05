@@ -197,8 +197,8 @@ function startScmcu(context: vscode.ExtensionContext): void {
     context.subscriptions.push(buildStatus);
     const flashStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 96);
     flashStatus.command = 'scmcu.buildAndFlash';
-    flashStatus.text = '$(zap) 编译下载';
-    flashStatus.tooltip = '一键编译 + 烧录到 SCMCU 编程器（需连接编程器并放入芯片）';
+    flashStatus.text = '$(zap)';
+    flashStatus.tooltip = '编译并下载到编程器';
     context.subscriptions.push(flashStatus);
     flashStatusItem = flashStatus;
     const srcStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 98);
@@ -259,18 +259,18 @@ function updateStatusBar(chipStatus: vscode.StatusBarItem, cfgStatus: vscode.Sta
         chipStatus.command = scwMode ? 'scmcu.setDevice' : 'scmcu.selectChip';
         chipStatus.tooltip = scwMode ? '点击更换芯片型号 (脱离 .scw 模式)' : '点击切换芯片型号';
         chipStatus.show();
-        buildStatus.text = '$(debug-start) 构建';
-        buildStatus.tooltip = scwMode ? '脱离 .scw 编译：源文件自动扫描或取自 scmcu.sourceFiles，配置字取自 scmcu.configWords' : '编译工程并生成 .hex + .scx（带芯片设置配置）';
+        buildStatus.text = '$(debug-start)';
+        buildStatus.tooltip = '编译';
         buildStatus.show();
         if (flashStatusItem) flashStatusItem.show();
         // 芯片设置 + 源文件按钮在两种模式下都可用：
         //   scw 模式 → 读写 .scw 文件
         //   scw-less 模式 → 读写 scmcu.configWords / scmcu.sourceFiles 工作区设置
-        cfgStatus.text = '$(settings-gear) 芯片设置';
-        cfgStatus.tooltip = scwMode ? '配置硬件选项并写入 scmcu.configWords' : '配置看门狗/低压复位/时钟/配置字，保存后写入烧录文件';
+        cfgStatus.text = '$(settings-gear)';
+        cfgStatus.tooltip = '芯片设置';
         cfgStatus.show();
-        srcStatus.text = '$(file-directory) 源文件';
-        srcStatus.tooltip = scwMode ? '管理 scmcu.sourceFiles（脱离 .scw 模式）' : '管理要编译的源文件（添加 / 删除 / 排序）';
+        srcStatus.text = '$(file-directory)';
+        srcStatus.tooltip = '管理源文件';
         srcStatus.show();
     } else {
         chipStatus.text = '$(chip) SCMCU';
